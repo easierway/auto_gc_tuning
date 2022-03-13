@@ -94,6 +94,17 @@ func getMachineMemoryLimit() (float64, error) {
 func tuningGOGC() {
 	runtime.ReadMemStats(&m)
 	heapInuse = float64(m.HeapInuse)
+	if float64(m.NextGC) < totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize &&
+		float64(m.NextGC) > totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize*0.8 {
+		if gTuningParam.IsToOutputDebugInfo {
+			println("skip the tuning")
+			println("Heap In Use", bToMb(m.HeapInuse))
+			println("NextGC Size", bToMb(m.NextGC))
+			println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
+			println("nextGOGC", nextGOGC)
+		}
+		return
+	}
 	if float64(m.NextGC) > totalMem {
 		if nextGOGC > gTuningParam.LowestGOGC {
 			nextGOGC = nextGOGC - 2*TuningStep
@@ -102,6 +113,7 @@ func tuningGOGC() {
 			println("Heap In Use", bToMb(m.HeapInuse))
 			println("NextGC Size", bToMb(m.NextGC))
 			println("nextGOGC", nextGOGC)
+			println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
 		}
 		debug.SetGCPercent(nextGOGC)
 		return
@@ -115,6 +127,7 @@ func tuningGOGC() {
 		println("Heap In Use", bToMb(m.HeapInuse))
 		println("nextGOGC", nextGOGC)
 		println("NextGC Size", bToMb(m.NextGC))
+		println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
 	}
 	debug.SetGCPercent(nextGOGC)
 }
