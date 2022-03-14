@@ -6,6 +6,7 @@ package autotuning
 import (
 	"io/ioutil"
 	"math"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	mem_util "github.com/shirou/gopsutil/mem"
-	//	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/process"
 )
 
 var gTuningParam TuningParam
@@ -22,7 +23,7 @@ var nextGOGC = 100
 
 var LastForceGCNum = uint32(0)
 
-var lastTuningTime time.Time
+var tunerStartTime time.Time
 
 var targetNextGC float64
 
@@ -46,9 +47,8 @@ func bToMb(b uint64) uint64 {
 }
 
 var (
-	m         runtime.MemStats
-	heapInuse float64
-	totalMem  float64
+	m        runtime.MemStats
+	totalMem float64
 )
 
 func parseUint(s string, base, bitSize int) (uint64, error) {
@@ -97,10 +97,39 @@ func getMachineMemoryLimit() (float64, error) {
 	return limit, nil
 }
 
+func trigerOOM_Protection() bool {
+	p, err := process.NewProcess(int32(os.Getpid()))
+	if err != nil {
+		println("failed to get process info")
+		return false
+	}
+
+	mem, err := p.MemoryPercent()
+	if err != nil {
+		println("failed to get mem info")
+		return false
+	}
+	if mem > MaxMemPercent {
+		println("reach to the high memory limit, trigger the force GC")
+		runtime.GC()
+		return true
+	}
+	return false
+
+}
+
+var heapInuse uint64
+
 func tuningGOGC() {
 	runtime.ReadMemStats(&m)
 
-	nextGOGC = int(targetNextGC * float64(nextGOGC) / float64(m.NextGC))
+	heapInuse = m.HeapInuse
+
+	if bToMb(heapInuse) < 1 {
+		heapInuse = 10 * 1024 * 1024
+	}
+
+	nextGOGC = int((targetNextGC/float64(heapInuse) - 1) * 100)
 	if nextGOGC < gTuningParam.LowestGOGC {
 		nextGOGC = gTuningParam.LowestGOGC
 	}
@@ -108,12 +137,13 @@ func tuningGOGC() {
 		nextGOGC = gTuningParam.HighestGOGC
 		println("the highest GOGC seems low.")
 	}
-	if gTuningParam.IsToOutputDebugInfo {
+	debug.SetGCPercent(nextGOGC)
 
+	if gTuningParam.IsToOutputDebugInfo {
 		println("heap in use", bToMb(m.HeapInuse))
+		println("target GC size", bToMb(uint64(targetNextGC)))
 		println("nextGOGC", nextGOGC)
 	}
-	debug.SetGCPercent(nextGOGC)
 }
 
 func finalizerHandler(f *finalizerRef) {
