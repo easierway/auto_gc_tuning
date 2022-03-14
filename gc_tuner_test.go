@@ -2,8 +2,9 @@ package autotuning
 
 import (
 	//"runtime/debug"
-	//	"fmt"
+	"fmt"
 	//"runtime"
+	"os"
 	"testing"
 	"time"
 )
@@ -25,8 +26,10 @@ func TestTuner(t *testing.T) {
 		IsToOutputDebugInfo:                    true, //set it false, when running in prod
 	})
 	//debug.SetGCPercent(200)
+
+	fmt.Println(int32(os.Getpid()))
 	for {
-		// bb = append(bb, alloc())
+		//bb = append(bb, alloc())
 		_ = alloc()
 	}
 }

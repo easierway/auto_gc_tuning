@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mem_util "github.com/shirou/gopsutil/mem"
+	//	"github.com/shirou/gopsutil/process"
 )
 
 var gTuningParam TuningParam
@@ -21,10 +22,15 @@ var nextGOGC = 100
 
 var LastForceGCNum = uint32(0)
 
-const TuningStep = 10
+var lastTuningTime time.Time
 
+var targetNextGC float64
+
+const TuningStep = 10
+const MinIntervalMs = 200
 const RamThresholdInPercentage = float32(80)
 const cgroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+const MaxMemPercent = float32(85)
 
 type finalizer struct {
 	ch  chan time.Time
@@ -93,41 +99,19 @@ func getMachineMemoryLimit() (float64, error) {
 
 func tuningGOGC() {
 	runtime.ReadMemStats(&m)
-	heapInuse = float64(m.HeapInuse)
-	if float64(m.NextGC) < totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize &&
-		float64(m.NextGC) > totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize*0.8 {
-		if gTuningParam.IsToOutputDebugInfo {
-			println("skip the tuning")
-			println("Heap In Use", bToMb(m.HeapInuse))
-			println("NextGC Size", bToMb(m.NextGC))
-			println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
-			println("nextGOGC", nextGOGC)
-		}
-		return
-	}
-	if float64(m.NextGC) > totalMem {
-		if nextGOGC > gTuningParam.LowestGOGC {
-			nextGOGC = nextGOGC - 2*TuningStep
-		}
-		if gTuningParam.IsToOutputDebugInfo {
-			println("Heap In Use", bToMb(m.HeapInuse))
-			println("NextGC Size", bToMb(m.NextGC))
-			println("nextGOGC", nextGOGC)
-			println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
-		}
-		debug.SetGCPercent(nextGOGC)
-		return
-	}
 
-	if (float64(m.NextGC) < totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize) &&
-		((nextGOGC + TuningStep) < gTuningParam.HighestGOGC) {
-		nextGOGC = nextGOGC + TuningStep
+	nextGOGC = int(targetNextGC * float64(nextGOGC) / float64(m.NextGC))
+	if nextGOGC < gTuningParam.LowestGOGC {
+		nextGOGC = gTuningParam.LowestGOGC
+	}
+	if nextGOGC > gTuningParam.HighestGOGC {
+		nextGOGC = gTuningParam.HighestGOGC
+		println("the highest GOGC seems low.")
 	}
 	if gTuningParam.IsToOutputDebugInfo {
-		println("Heap In Use", bToMb(m.HeapInuse))
+
+		println("heap in use", bToMb(m.HeapInuse))
 		println("nextGOGC", nextGOGC)
-		println("NextGC Size", bToMb(m.NextGC))
-		println("Limit size", bToMb(uint64(totalMem*gTuningParam.PropertionActiveHeapSizeInTotalMemSize)))
 	}
 	debug.SetGCPercent(nextGOGC)
 }
@@ -167,7 +151,7 @@ func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 	f := &finalizer{
 		ch: make(chan time.Time, 1),
 	}
-
+	targetNextGC = totalMem * param.PropertionActiveHeapSizeInTotalMemSize
 	f.ref = &finalizerRef{parent: f}
 	runtime.SetFinalizer(f.ref, finalizerHandler)
 	f.ref = nil
