@@ -85,6 +85,7 @@ func getCGroupMemoryLimit() (float64, error) {
 		return 0, err
 	}
 	limit := math.Min(float64(usage), float64(machineMemory.Total))
+	limit = limit * (1 + gTuningParam.SwapRatio)
 	return limit, nil
 }
 
@@ -94,6 +95,7 @@ func getMachineMemoryLimit() (float64, error) {
 		return 0, err
 	}
 	limit := float64(machineMemory.Total)
+	limit = limit * (1 + gTuningParam.SwapRatio)
 	return limit, nil
 }
 
@@ -161,6 +163,7 @@ type TuningParam struct {
 	HighestGOGC                            int     // the highest value of GOGC (define the scope for tuning)
 	PropertionActiveHeapSizeInTotalMemSize float64 // the value of (HeapInUse/MemoryLimit), the value could be larger than 1
 	IsToOutputDebugInfo                    bool    // whether to output the debug info
+	SwapRatio                              float64 // To not count the swap size set it as 0, (normally it could be 0.5)
 }
 
 // NewTuner is to create a tuner for tuning GOGC
@@ -168,6 +171,7 @@ type TuningParam struct {
 func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 
 	var err error
+	gTuningParam = param
 	if useCgroup {
 		totalMem, err = getCGroupMemoryLimit()
 	} else {
@@ -176,7 +180,7 @@ func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 	if err != nil {
 		panic(err)
 	}
-	gTuningParam = param
+
 	nextGOGC = param.LowestGOGC
 	f := &finalizer{
 		ch: make(chan time.Time, 1),

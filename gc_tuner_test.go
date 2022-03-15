@@ -20,16 +20,17 @@ var ballast []byte
 func TestTuner(t *testing.T) {
 	//bb := make([]*[]int64, 10)
 	NewTuner(false, TuningParam{
-		LowestGOGC:                             100,
-		HighestGOGC:                            1000,
-		PropertionActiveHeapSizeInTotalMemSize: float64(1),
+		LowestGOGC:                             1,
+		HighestGOGC:                            10000000,
+		PropertionActiveHeapSizeInTotalMemSize: float64(0.7),
 		IsToOutputDebugInfo:                    true, //set it false, when running in prod
+		SwapRatio:                              0.5,
 	})
 	//debug.SetGCPercent(200)
 
 	fmt.Println(int32(os.Getpid()))
 	for {
-		//bb = append(bb, alloc())
+		//	bb = append(bb, alloc())
 		_ = alloc()
 	}
 }
