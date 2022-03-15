@@ -23,8 +23,8 @@ func TestTuner(t *testing.T) {
 		LowestGOGC:                             1,
 		HighestGOGC:                            10000000,
 		PropertionActiveHeapSizeInTotalMemSize: float64(0.7),
-		IsToOutputDebugInfo:                    true, //set it false, when running in prod
-		SwapRatio:                              0.5,
+		IsToOutputDebugInfo:                    true, // set it false, when running in prod
+		SwapRatio:                              0.5,  // the recommend value is [0, 0.5]
 	})
 	//debug.SetGCPercent(200)
 
