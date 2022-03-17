@@ -24,10 +24,19 @@ func TestTuner(t *testing.T) {
 		HighestGOGC:                            10000000,
 		PropertionActiveHeapSizeInTotalMemSize: float64(0.7),
 		IsToOutputDebugInfo:                    true, // set it false, when running in prod
-		SwapRatio:                              0.5,  // the recommend value is [0, 0.5]
 	})
 	//debug.SetGCPercent(200)
+	go func() {
 
+		time.Sleep(time.Second * 10)
+		fmt.Println("reset param")
+		UpdateTuningParam(TuningParam{
+			LowestGOGC:                             100,
+			HighestGOGC:                            500,
+			PropertionActiveHeapSizeInTotalMemSize: float64(1),
+			IsToOutputDebugInfo:                    true,
+		})
+	}()
 	fmt.Println(int32(os.Getpid()))
 	for {
 		//	bb = append(bb, alloc())

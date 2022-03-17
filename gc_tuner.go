@@ -6,7 +6,8 @@ package autotuning
 import (
 	"io/ioutil"
 	"math"
-	"os"
+	"sync/atomic"
+
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	mem_util "github.com/shirou/gopsutil/mem"
-	"github.com/shirou/gopsutil/process"
 )
 
 var gTuningParam TuningParam
@@ -27,11 +27,43 @@ var tunerStartTime time.Time
 
 var targetNextGC float64
 
+const SynIntervalMins = time.Minute * 3
 const TuningStep = 10
 const MinIntervalMs = 200
 const RamThresholdInPercentage = float32(80)
 const cgroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 const MaxMemPercent = float32(85)
+
+var gTuningParamCache = &tuningParamCache{}
+
+type tuningParamCache struct {
+	tuningParam atomic.Value
+}
+
+func (cache *tuningParamCache) put(tuningParam TuningParam) {
+	cache.tuningParam.Store(tuningParam)
+}
+
+func (cache *tuningParamCache) get() TuningParam {
+	ret, isOk := cache.tuningParam.Load().(TuningParam)
+	if !isOk {
+		panic("wrong data in tuning param cache.")
+	}
+	return ret
+}
+
+// UpdateTuningParam is to update the tuning param at runtime.
+func UpdateTuningParam(param TuningParam) {
+	gTuningParamCache.put(param)
+}
+
+func syncTuningParam() {
+
+	for {
+		time.Sleep(SynIntervalMins)
+		updateTuningParam(gTuningParamCache.get())
+	}
+}
 
 type finalizer struct {
 	ch  chan time.Time
@@ -85,7 +117,6 @@ func getCGroupMemoryLimit() (float64, error) {
 		return 0, err
 	}
 	limit := math.Min(float64(usage), float64(machineMemory.Total))
-	limit = limit * (1 + gTuningParam.SwapRatio)
 	return limit, nil
 }
 
@@ -95,29 +126,7 @@ func getMachineMemoryLimit() (float64, error) {
 		return 0, err
 	}
 	limit := float64(machineMemory.Total)
-	limit = limit * (1 + gTuningParam.SwapRatio)
 	return limit, nil
-}
-
-func trigerOOM_Protection() bool {
-	p, err := process.NewProcess(int32(os.Getpid()))
-	if err != nil {
-		println("failed to get process info")
-		return false
-	}
-
-	mem, err := p.MemoryPercent()
-	if err != nil {
-		println("failed to get mem info")
-		return false
-	}
-	if mem > MaxMemPercent {
-		println("reach to the high memory limit, trigger the force GC")
-		runtime.GC()
-		return true
-	}
-	return false
-
 }
 
 var heapInuse uint64
@@ -162,16 +171,19 @@ type TuningParam struct {
 	LowestGOGC                             int     // the lowest value of GOGC
 	HighestGOGC                            int     // the highest value of GOGC (define the scope for tuning)
 	PropertionActiveHeapSizeInTotalMemSize float64 // the value of (HeapInUse/MemoryLimit), the value could be larger than 1
-	IsToOutputDebugInfo                    bool    // whether to output the debug info
-	SwapRatio                              float64 // To not count the swap size set it as 0, (normally it could be 0.5)
+	IsToOutputDebugInfo                    bool    // whether to output the debug infoΩ
+}
+
+func updateTuningParam(param TuningParam) {
+	gTuningParam = param
+	nextGOGC = param.LowestGOGC
+	targetNextGC = totalMem * param.PropertionActiveHeapSizeInTotalMemSize
 }
 
 // NewTuner is to create a tuner for tuning GOGC
 // useCgroup : when your program is running in Docker env/with cgroup configuration
 func NewTuner(useCgroup bool, param TuningParam) *finalizer {
-
 	var err error
-	gTuningParam = param
 	if useCgroup {
 		totalMem, err = getCGroupMemoryLimit()
 	} else {
@@ -180,14 +192,16 @@ func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 	if err != nil {
 		panic(err)
 	}
+	gTuningParamCache.put(param)
+	updateTuningParam(param)
+	go syncTuningParam()
 
-	nextGOGC = param.LowestGOGC
 	f := &finalizer{
 		ch: make(chan time.Time, 1),
 	}
-	targetNextGC = totalMem * param.PropertionActiveHeapSizeInTotalMemSize
 	f.ref = &finalizerRef{parent: f}
 	runtime.SetFinalizer(f.ref, finalizerHandler)
 	f.ref = nil
+
 	return f
 }
