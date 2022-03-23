@@ -19,12 +19,12 @@ var ballast []byte
 
 func TestTuner(t *testing.T) {
 	//bb := make([]*[]int64, 10)
-	NewTuner(false, TuningParam{
+	NewTunerExt(false, TuningParam{
 		LowestGOGC:                             1,
 		HighestGOGC:                            10000000,
 		PropertionActiveHeapSizeInTotalMemSize: float64(0.7),
 		IsToOutputDebugInfo:                    true, // set it false, when running in prod
-	})
+	}, true, 1)
 	//debug.SetGCPercent(200)
 	go func() {
 

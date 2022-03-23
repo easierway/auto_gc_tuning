@@ -17,7 +17,10 @@ import (
 	mem_util "github.com/shirou/gopsutil/mem"
 )
 
+var startTime time.Time
+
 var gTuningParam TuningParam
+var gStartingTimeSpentMins float64
 
 var nextGOGC = 100
 
@@ -26,6 +29,9 @@ var LastForceGCNum = uint32(0)
 var tunerStartTime time.Time
 
 var targetNextGC float64
+var lastReadingMemTime time.Time
+
+var gIsHeapStable bool
 
 const SynIntervalMins = time.Minute * 3
 const TuningStep = 10
@@ -33,6 +39,7 @@ const MinIntervalMs = 200
 const RamThresholdInPercentage = float32(80)
 const cgroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 const MaxMemPercent = float32(85)
+const MaxMemReadingIntervalMins = time.Minute * 1
 
 var gTuningParamCache = &tuningParamCache{}
 
@@ -131,25 +138,45 @@ func getMachineMemoryLimit() (float64, error) {
 
 var heapInuse uint64
 
+func needToReadMem() bool {
+	if !gIsHeapStable {
+		return true
+	}
+
+	if time.Since(startTime) < time.Minute*time.Duration(gStartingTimeSpentMins) {
+		return true
+	}
+	println("MaxReadingInterval", time.Since(lastReadingMemTime) > MaxMemReadingIntervalMins)
+	if time.Since(lastReadingMemTime) > MaxMemReadingIntervalMins {
+		return true
+	}
+	return false
+}
+
 func tuningGOGC() {
-	runtime.ReadMemStats(&m)
+	if needToReadMem() {
+		println("read memstate")
+		lastReadingMemTime = time.Now()
+		runtime.ReadMemStats(&m)
 
-	heapInuse = m.HeapInuse
+		heapInuse = m.HeapInuse
 
-	if bToMb(heapInuse) < 1 {
-		heapInuse = 10 * 1024 * 1024
+		if bToMb(heapInuse) < 1 {
+			heapInuse = 10 * 1024 * 1024
+		}
+
+		nextGOGC = int((targetNextGC/float64(heapInuse) - 1) * 100)
+		if nextGOGC < gTuningParam.LowestGOGC {
+			nextGOGC = gTuningParam.LowestGOGC
+		}
+		if nextGOGC > gTuningParam.HighestGOGC {
+			nextGOGC = gTuningParam.HighestGOGC
+			println("the highest GOGC seems low.")
+		}
+		debug.SetGCPercent(nextGOGC)
+	} else {
+		println("not read memstate")
 	}
-
-	nextGOGC = int((targetNextGC/float64(heapInuse) - 1) * 100)
-	if nextGOGC < gTuningParam.LowestGOGC {
-		nextGOGC = gTuningParam.LowestGOGC
-	}
-	if nextGOGC > gTuningParam.HighestGOGC {
-		nextGOGC = gTuningParam.HighestGOGC
-		println("the highest GOGC seems low.")
-	}
-	debug.SetGCPercent(nextGOGC)
-
 	if gTuningParam.IsToOutputDebugInfo {
 		println("heap in use", bToMb(m.HeapInuse))
 		println("target GC size", bToMb(uint64(targetNextGC)))
@@ -182,7 +209,10 @@ func updateTuningParam(param TuningParam) {
 
 // NewTuner is to create a tuner for tuning GOGC
 // useCgroup : when your program is running in Docker env/with cgroup configuration
-func NewTuner(useCgroup bool, param TuningParam) *finalizer {
+func NewTunerExt(useCgroup bool, param TuningParam,
+	isHeapStable bool, startingTimeSpentMins int64) *finalizer {
+	gIsHeapStable = isHeapStable
+	gStartingTimeSpentMins = float64(startingTimeSpentMins)
 	var err error
 	if useCgroup {
 		totalMem, err = getCGroupMemoryLimit()
@@ -195,7 +225,8 @@ func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 	gTuningParamCache.put(param)
 	updateTuningParam(param)
 	go syncTuningParam()
-
+	startTime = time.Now()
+	lastReadingMemTime = time.Now()
 	f := &finalizer{
 		ch: make(chan time.Time, 1),
 	}
@@ -204,4 +235,9 @@ func NewTuner(useCgroup bool, param TuningParam) *finalizer {
 	f.ref = nil
 
 	return f
+}
+
+func NewTuner(useCgroup bool, param TuningParam,
+) *finalizer {
+	return NewTunerExt(useCgroup, param, false, 0)
 }
