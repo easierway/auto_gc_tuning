@@ -39,7 +39,7 @@ const MinIntervalMs = 200
 const RamThresholdInPercentage = float32(80)
 const cgroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 const MaxMemPercent = float32(85)
-const MaxMemReadingIntervalMins = time.Minute * 1
+const MaxMemReadingIntervalMins = time.Minute * 5
 
 var gTuningParamCache = &tuningParamCache{}
 
