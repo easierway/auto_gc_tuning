@@ -17,29 +17,35 @@ import (
 	mem_util "github.com/shirou/gopsutil/mem"
 )
 
-var startTime time.Time
+var (
+	startTime time.Time
 
-var gTuningParam TuningParam
-var gStartingTimeSpentMins float64
+	gTuningParam           TuningParam
+	gStartingTimeSpentMins float64
 
-var nextGOGC = 100
+	nextGOGC = 100
 
-var LastForceGCNum = uint32(0)
+	lastUpdateParamTime time.Time
 
-var tunerStartTime time.Time
+	LastForceGCNum = uint32(0)
 
-var targetNextGC float64
-var lastReadingMemTime time.Time
+	tunerStartTime time.Time
 
-var gIsHeapStable bool
+	targetNextGC       float64
+	lastReadingMemTime time.Time
 
-const SynIntervalMins = time.Minute * 3
-const TuningStep = 10
-const MinIntervalMs = 200
-const RamThresholdInPercentage = float32(80)
-const cgroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-const MaxMemPercent = float32(85)
-const MaxMemReadingIntervalMins = time.Minute * 5
+	gIsHeapStable bool
+)
+
+const (
+	SynIntervalMins           = time.Minute * 3
+	TuningStep                = 10
+	MinIntervalMs             = 200
+	RamThresholdInPercentage  = float32(80)
+	cgroupMemLimitPath        = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+	MaxMemPercent             = float32(85)
+	MaxMemReadingIntervalMins = time.Minute * 5
+)
 
 var gTuningParamCache = &tuningParamCache{}
 
@@ -62,14 +68,6 @@ func (cache *tuningParamCache) get() TuningParam {
 // UpdateTuningParam is to update the tuning param at runtime.
 func UpdateTuningParam(param TuningParam) {
 	gTuningParamCache.put(param)
-}
-
-func syncTuningParam() {
-
-	for {
-		time.Sleep(SynIntervalMins)
-		updateTuningParam(gTuningParamCache.get())
-	}
 }
 
 type finalizer struct {
@@ -154,6 +152,9 @@ func needToReadMem() bool {
 }
 
 func tuningGOGC() {
+	if time.Since(lastUpdateParamTime) > SynIntervalMins {
+		updateTuningParam(gTuningParamCache.get())
+	}
 	if needToReadMem() {
 		println("read memstate")
 		lastReadingMemTime = time.Now()
@@ -205,10 +206,13 @@ func updateTuningParam(param TuningParam) {
 	gTuningParam = param
 	nextGOGC = param.LowestGOGC
 	targetNextGC = totalMem * param.PropertionActiveHeapSizeInTotalMemSize
+	lastUpdateParamTime = time.Now()
 }
 
-// NewTuner is to create a tuner for tuning GOGC
-// useCgroup : when your program is running in Docker env/with cgroup configuration
+// NewTunerExt is to create a tuner for tuning GOGC
+// useCgroup: when your program is running in Docker env/with cgroup configuration
+// isHeapStable: whether if your application's objects in heap is stable after GC
+// startingTimeSpentMins: the time spent for your application to the stable state
 func NewTunerExt(useCgroup bool, param TuningParam,
 	isHeapStable bool, startingTimeSpentMins int64) *finalizer {
 	gIsHeapStable = isHeapStable
@@ -224,7 +228,6 @@ func NewTunerExt(useCgroup bool, param TuningParam,
 	}
 	gTuningParamCache.put(param)
 	updateTuningParam(param)
-	go syncTuningParam()
 	startTime = time.Now()
 	lastReadingMemTime = time.Now()
 	f := &finalizer{
@@ -237,6 +240,8 @@ func NewTunerExt(useCgroup bool, param TuningParam,
 	return f
 }
 
+// NewTuner is to create a tuner for tuning GOGC
+// useCgroup : when your program is running in Docker env/with cgroup configuration
 func NewTuner(useCgroup bool, param TuningParam,
 ) *finalizer {
 	return NewTunerExt(useCgroup, param, false, 0)
