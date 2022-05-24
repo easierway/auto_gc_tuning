@@ -153,7 +153,7 @@ func needToReadMem() bool {
 
 func tuningGOGC() {
 	if time.Since(lastUpdateParamTime) > SynIntervalMins {
-		updateTuningParam(gTuningParamCache.get())
+		updateTuningParam(gTuningParamCache.get(), false)
 	}
 	if needToReadMem() {
 		println("read memstate")
@@ -202,9 +202,11 @@ type TuningParam struct {
 	IsToOutputDebugInfo                    bool    // whether to output the debug infoΩ
 }
 
-func updateTuningParam(param TuningParam) {
+func updateTuningParam(param TuningParam, isFirstInit bool) {
 	gTuningParam = param
-	nextGOGC = param.LowestGOGC
+	if isFirstInit {
+		nextGOGC = param.LowestGOGC
+	}
 	targetNextGC = totalMem * param.PropertionActiveHeapSizeInTotalMemSize
 	lastUpdateParamTime = time.Now()
 }
@@ -227,7 +229,7 @@ func NewTunerExt(useCgroup bool, param TuningParam,
 		panic(err)
 	}
 	gTuningParamCache.put(param)
-	updateTuningParam(param)
+	updateTuningParam(param, true)
 	startTime = time.Now()
 	lastReadingMemTime = time.Now()
 	f := &finalizer{
